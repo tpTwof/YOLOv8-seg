@@ -1,0 +1,7 @@
+# YOLO 数据集配置文件 (自动生成)
+path: /home/tptwo/shit/YOLO-grab/dataset
+train: images/train
+val: images/val
+
+names:
+  0: cube

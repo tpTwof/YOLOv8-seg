@@ -1,0 +1,49 @@
+# Models (shared separately)
+*.pt
+*.onnx
+*.engine
+*.tflite
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Conda / venv
+.conda/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+
+# Claude Code
+.claude/
+
+# Training outputs
+runs/
+
+# Inference results
+results/
+!results/.gitkeep
+
+# Operation logs
+what_do/
+!what_do/.gitkeep
+
+# LabelMe intermediate annotations (regeneratable via yolo_to_labelme.py)
+# Contains symlinks with absolute paths that break on other machines
+dataset/labelme/
+
+# ROS2 build artifacts
+ros2_ws/build/
+ros2_ws/install/
+ros2_ws/log/
+
+# OS
+.DS_Store
+Thumbs.db
