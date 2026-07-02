@@ -35,6 +35,16 @@ RS_FPS = 15
 
 FRAME_NAME = "camera_color_optical_frame"
 
+# ──────────────────────────────────────────────
+# 手眼标定结果 (EYE_OUT_HAND): Camera → Base
+# ──────────────────────────────────────────────
+T_CAM2BASE = np.array([
+    [0.10088699, -0.69368495, 0.71317811, 0.19659611],
+    [0.99480199, 0.06038281, -0.08199345, -0.03518756],
+    [0.01381392, 0.71774307, 0.69617100, -0.06704601],
+    [0.0,        0.0,        0.0,         1.0       ],
+])
+
 # 可视化
 MASK_ALPHA = 0.4
 BOX_THICKNESS = 2
@@ -88,10 +98,15 @@ def draw_results(frame: np.ndarray, result, target_info: dict) -> np.ndarray:
         cx, cy = t["center_pixel"]
         cv2.circle(annotated, (int(cx), int(cy)), 6, (0, 0, 255), -1)
         pos = t["position_camera"]
+        pos_base = t.get("position_base")
         if pos:
-            txt = f"({pos['x']:.3f}, {pos['y']:.3f}, {pos['z']:.3f})m"
-            cv2.putText(annotated, txt, (int(cx) + 10, int(cy)),
+            txt_cam = f"Cam:({pos['x']:.3f},{pos['y']:.3f},{pos['z']:.3f})m"
+            cv2.putText(annotated, txt_cam, (int(cx) + 10, int(cy)),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
+        if pos_base:
+            txt_base = f"Base:({pos_base['x']:.3f},{pos_base['y']:.3f},{pos_base['z']:.3f})m"
+            cv2.putText(annotated, txt_base, (int(cx) + 10, int(cy) + 18),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
 
     return annotated
 
@@ -228,6 +243,20 @@ def build_target_info(
     # 抓取角
     grasp_yaw = compute_grasp_yaw(mask_binary)
 
+    # 相机坐标 → 基座坐标
+    position_base = None
+    if position_camera is not None:
+        p_cam = np.array([position_camera["x"],
+                          position_camera["y"],
+                          position_camera["z"],
+                          1.0])
+        p_base = T_CAM2BASE @ p_cam
+        position_base = {
+            "x": round(float(p_base[0]), 6),
+            "y": round(float(p_base[1]), 6),
+            "z": round(float(p_base[2]), 6),
+        }
+
     return {
         "has_target": True,
         "target": {
@@ -239,6 +268,7 @@ def build_target_info(
             "mask_area": round(mask_area, 1),
             "depth_m": round(depth_m, 4),
             "position_camera": position_camera,
+            "position_base": position_base,
             "grasp_yaw": round(grasp_yaw, 4),
             "frame": FRAME_NAME,
             "timestamp": time.time(),

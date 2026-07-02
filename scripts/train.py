@@ -80,6 +80,7 @@ def train(args: argparse.Namespace) -> str:
     print(f"  设备:     {args.device or '自动'}")
     print("=" * 50)
 
+
     # 加载模型
     model = YOLO(args.model)
 

@@ -12,6 +12,7 @@ yolo_pose_publisher — 视觉前端 ROS2 封装
 如果没有 TF（相机到机械臂的变换未配置），会用静态变换 fallback。
 """
 
+import collections
 import json
 import math
 import subprocess
@@ -37,6 +38,16 @@ CAMERA_FRAME = 'camera_color_optical_frame'
 # TF 等待超时
 TF_TIMEOUT = 3.0
 
+# 手眼标定矩阵 T_cam2base (EYE_OUT_HAND)
+T_CAM2BASE = np.array([
+    [0.10088699, -0.69368495, 0.71317811, 0.19659611],
+    [0.99480199, 0.06038281, -0.08199345, -0.03518756],
+    [0.01381392, 0.71774307, 0.69617100, -0.06704601],
+    [0.0,        0.0,        0.0,         1.0       ],
+])
+# T_cam2base 对应的四元数 (x, y, z, w)，预计算避免运行时依赖 scipy
+T_CAM2BASE_QUAT = (0.29339955, 0.25657593, 0.61945565, 0.68143980)
+
 
 class YoloPosePublisher(Node):
 
@@ -46,22 +57,29 @@ class YoloPosePublisher(Node):
         # ── 参数 ──
         self.declare_parameter('world_frame', 'world')
         self.declare_parameter('model_path', '')
-        self.declare_parameter('static_tf', True)         # 是否用静态 TF fallback
-        self.declare_parameter('tf_tx', 0.0)              # 静态 TF 平移 x
-        self.declare_parameter('tf_ty', 0.0)              # 静态 TF 平移 y
-        self.declare_parameter('tf_tz', 0.0)              # 静态 TF 平移 z
-        self.declare_parameter('tf_qx', 0.0)              # 静态 TF 四元数 x
-        self.declare_parameter('tf_qy', 0.0)              # 静态 TF 四元数 y
-        self.declare_parameter('tf_qz', 0.0)              # 静态 TF 四元数 z
-        self.declare_parameter('tf_qw', 1.0)              # 静态 TF 四元数 w
+        self.declare_parameter('static_tf', False)        # 默认关闭静态 TF，用标定矩阵直算
+        # 手眼标定结果 (EYE_OUT_HAND): Camera → Base
+        self.declare_parameter('tf_tx', 0.19659611)       # 静态 TF 平移 x
+        self.declare_parameter('tf_ty', -0.03518756)      # 静态 TF 平移 y
+        self.declare_parameter('tf_tz', -0.06704601)      # 静态 TF 平移 z
+        self.declare_parameter('tf_qx', 0.29339955)       # 静态 TF 四元数 x
+        self.declare_parameter('tf_qy', 0.25657593)       # 静态 TF 四元数 y
+        self.declare_parameter('tf_qz', 0.61945565)       # 静态 TF 四元数 z
+        self.declare_parameter('tf_qw', 0.68143980)       # 静态 TF 四元数 w
         self.declare_parameter('min_confidence', 0.5)     # 最低置信度
         self.declare_parameter('vision_frontend', DEFAULT_VISION_FRONTEND)  # vision_frontend.py 路径
         self.declare_parameter('show_vision', False)      # 是否显示 OpenCV 可视化窗口
+        self.declare_parameter('smooth_window', 5)        # 平滑窗口大小 (帧数)
 
         self._world_frame = self.get_parameter('world_frame').value
         self._model_path = self.get_parameter('model_path').value
         self._use_static_tf = self.get_parameter('static_tf').value
         self._min_confidence = self.get_parameter('min_confidence').value
+        self._smooth_window = self.get_parameter('smooth_window').value
+
+        # ── 平滑滤波缓冲区 ──
+        self._pos_buf = collections.deque(maxlen=self._smooth_window)
+        self._yaw_buf = collections.deque(maxlen=self._smooth_window)
 
         # ── TF ──
         self._tf_buffer = Buffer()
@@ -166,6 +184,9 @@ class YoloPosePublisher(Node):
     def _process_frame(self, data: dict):
         """处理一帧视觉结果，转换并发布 PoseStamped。"""
         if not data.get('has_target'):
+            # 丢失目标，清空缓冲区，停止发布
+            self._pos_buf.clear()
+            self._yaw_buf.clear()
             return
 
         target = data['target']
@@ -206,11 +227,72 @@ class YoloPosePublisher(Node):
         if pose_world is None:
             return
 
-        self._pub.publish(pose_world)
+        # ── 中值平滑 ──
         p = pose_world.pose.position
+        self._pos_buf.append([p.x, p.y, p.z])
+        self._yaw_buf.append(grasp_yaw)
+
+        if len(self._pos_buf) < self._smooth_window:
+            # 缓冲区未满，暂不发布
+            return
+
+        # 取中位数
+        pos_arr = np.array(self._pos_buf)
+        median_pos = np.median(pos_arr, axis=0)
+        median_yaw = float(np.median(self._yaw_buf))
+
+        # 构造平滑后的 PoseStamped
+        smooth = PoseStamped()
+        smooth.header.stamp = self.get_clock().now().to_msg()
+        smooth.header.frame_id = self._world_frame
+        smooth.pose.position.x = float(median_pos[0])
+        smooth.pose.position.y = float(median_pos[1])
+        smooth.pose.position.z = float(median_pos[2])
+
+        half_yaw = median_yaw / 2.0
+        smooth.pose.orientation.x = 0.0
+        smooth.pose.orientation.y = 0.0
+        smooth.pose.orientation.z = math.sin(half_yaw)
+        smooth.pose.orientation.w = math.cos(half_yaw)
+
+        self._pub.publish(smooth)
         self.get_logger().info(
             f'发布目标: {target["class_name"]} ({conf:.2f}) '
-            f'world=({p.x:.3f}, {p.y:.3f}, {p.z:.3f})')
+            f'world=({median_pos[0]:.3f}, {median_pos[1]:.3f}, {median_pos[2]:.3f}) '
+            f'[smoothed n={len(self._pos_buf)}]')
+
+    def _transform_cam_to_base_direct(self, pose_cam: PoseStamped) -> PoseStamped:
+        """用手眼标定矩阵直接将相机坐标变换到 base 坐标 (TF 不可用时的 fallback)。"""
+        R = T_CAM2BASE[:3, :3]
+        t = T_CAM2BASE[:3, 3]
+
+        p_cam = np.array([pose_cam.pose.position.x,
+                          pose_cam.pose.position.y,
+                          pose_cam.pose.position.z])
+        p_base = R @ p_cam + t
+
+        # 变换姿态: q_base = q_cam2base * q_cam
+        qx_tf, qy_tf, qz_tf, qw_tf = T_CAM2BASE_QUAT
+
+        so = pose_cam.pose.orientation
+        # q_out = q_tf * q_src
+        ow = qw_tf*so.w - qx_tf*so.x - qy_tf*so.y - qz_tf*so.z
+        ox = qw_tf*so.x + qx_tf*so.w + qy_tf*so.z - qz_tf*so.y
+        oy = qw_tf*so.y - qx_tf*so.z + qy_tf*so.w + qz_tf*so.x
+        oz = qw_tf*so.z + qx_tf*so.y - qy_tf*so.x + qz_tf*so.w
+
+        pose_base = PoseStamped()
+        pose_base.header.stamp = pose_cam.header.stamp
+        pose_base.header.frame_id = self._world_frame
+        pose_base.pose.position.x = float(p_base[0])
+        pose_base.pose.position.y = float(p_base[1])
+        pose_base.pose.position.z = float(p_base[2])
+        pose_base.pose.orientation.x = float(ox)
+        pose_base.pose.orientation.y = float(oy)
+        pose_base.pose.orientation.z = float(oz)
+        pose_base.pose.orientation.w = float(ow)
+
+        return pose_base
 
     @staticmethod
     def _quat_to_rot(qx, qy, qz, qw):
@@ -231,8 +313,10 @@ class YoloPosePublisher(Node):
                 timeout=Duration(seconds=TF_TIMEOUT),
             )
         except Exception as e:
-            self.get_logger().warn(f'TF 变换失败 ({CAMERA_FRAME} → {self._world_frame}): {e}')
-            return None
+            self.get_logger().warn(
+                f'TF 变换失败 ({CAMERA_FRAME} → {self._world_frame}): {e}\n'
+                f'使用手眼标定矩阵直接变换作为 fallback')
+            return self._transform_cam_to_base_direct(pose_cam)
 
         t = transform.transform.translation
         r = transform.transform.rotation
