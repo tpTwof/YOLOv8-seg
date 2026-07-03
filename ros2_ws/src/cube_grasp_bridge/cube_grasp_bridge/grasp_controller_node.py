@@ -308,18 +308,21 @@ class GraspControllerNode(Node):
         req.ik_request.timeout.nanosec = int((IK_TIMEOUT % 1) * 1e9)
 
         # 用当前关节位置做种子，求解器优先找"近路"
+        seed_positions = []
         if self._current_joints:
             seed = JointState()
             for jn in JOINT_NAMES:
                 if jn in self._current_joints:
                     seed.name.append(jn)
                     seed.position.append(self._current_joints[jn])
+                    seed_positions.append(f'{jn}={self._current_joints[jn]:.3f}')
             if seed.name:
                 req.ik_request.robot_state.joint_state = seed
 
         self.get_logger().info(
             f'  IK 请求: pos=({x:.3f}, {y:.3f}, {z:.3f}) '
-            f'orient=({ox:.3f}, {oy:.3f}, {oz:.3f}, {ow:.3f})')
+            f'orient=({ox:.3f}, {oy:.3f}, {oz:.3f}, {ow:.3f})'
+            f'{" seed=[" + ", ".join(seed_positions) + "]" if seed_positions else " (无种子)"}')
         return self._ik_client.call_async(req)
 
     def _extract_joints(self, ik_result):

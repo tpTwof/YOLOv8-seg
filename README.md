@@ -33,6 +33,10 @@ YOLO-grab/
 ├── test_rs.py                  # RealSense 相机连通性测试
 ├── requirements.txt            # Python 依赖
 │
+├── docs/                       # 文档
+│   ├── run.md                  # 完整抓取链路启动步骤
+│   └── gripper.md              # 夹爪相关说明
+│
 ├── scripts/                    # 数据集构建与训练工具
 │   ├── run_pipeline.py         # 一键数据集构建流水线
 │   ├── extract_frames.py       # 视频抽帧 + 训练/验证集划分
@@ -194,20 +198,25 @@ source install/setup.bash
 ros2 launch cube_grasp_bridge grasp_bridge.launch.py
 
 # 仅启动视觉节点
-ros2 launch cube_grasp_bridge grasp_bridge.launch.py start_controller:=false
+ros2 launch cube_grasp_bridge grasp_bridge.launch.py controller:=false
 
 # 仅启动抓取控制节点
-ros2 launch cube_grasp_bridge grasp_bridge.launch.py start_vision:=false
+ros2 launch cube_grasp_bridge grasp_bridge.launch.py vision:=false
 ```
 
 **Launch 参数：**
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
-| `model_path` | `best.pt` | YOLO 模型路径 |
-| `confidence` | `0.5` | 检测置信度阈值 |
-| `start_vision` | `true` | 是否启动视觉节点 |
-| `start_controller` | `true` | 是否启动抓取控制节点 |
+| `vision` | `true` | 是否启动视觉节点 |
+| `controller` | `true` | 是否启动抓取控制节点 |
+| `model_path` | `` | YOLO 模型路径（空则用默认） |
+| `min_confidence` | `0.5` | 检测置信度阈值 |
+| `flip_x` | `true` | 发送 IK 前对目标 X 取反 |
+| `smooth_window` | `5` | 平滑窗口帧数 |
+| `show_vision` | `false` | 是否显示 OpenCV 可视化窗口 |
+| `tf_tx`/`tf_ty`/`tf_tz` | 标定值 | 相机到机械臂的静态 TF 平移 |
+| `tf_qx`/`tf_qy`/`tf_qz`/`tf_qw` | 标定值 | 相机到机械臂的静态 TF 旋转 |
 
 ## 抓取流程
 

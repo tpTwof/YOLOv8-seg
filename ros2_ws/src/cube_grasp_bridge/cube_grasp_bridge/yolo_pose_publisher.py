@@ -198,34 +198,38 @@ class YoloPosePublisher(Node):
         if conf < self._min_confidence:
             return
 
-        # 3D 位置
-        pos_cam = target.get('position_camera')
-        if pos_cam is None:
-            self.get_logger().warn('目标无 3D 位置，跳过')
+        # 直接用 vision_frontend 已算好的基座坐标，不再做二次变换
+        pos_base = target.get('position_base')
+        if pos_base is None:
+            return  # 静默跳过，vision_frontend 某些帧可能 depth=0 导致无反投影
+
+        # ── 工作空间过滤 ──
+        # 只接受机械臂前方的目标，拒绝后方和远处
+        px, py, pz = pos_base['x'], pos_base['y'], pos_base['z']
+        if px < 0.05:          # X 太近或在后方（机械臂前方是 +X）
+            return
+        if px > 0.55:          # X 太远，超过臂展
+            return
+        if abs(py) > 0.30:     # Y 左右偏移过大
+            return
+        if pz < -0.10 or pz > 0.40:  # Z 高度范围
             return
 
-        # 抓取角
         grasp_yaw = target.get('grasp_yaw', 0.0)
 
-        # 构造相机坐标系下的 PoseStamped
-        pose_cam = PoseStamped()
-        pose_cam.header.stamp = self.get_clock().now().to_msg()
-        pose_cam.header.frame_id = CAMERA_FRAME
-        pose_cam.pose.position.x = pos_cam['x']
-        pose_cam.pose.position.y = pos_cam['y']
-        pose_cam.pose.position.z = pos_cam['z']
+        # 直接用基座坐标构造 PoseStamped
+        pose_world = PoseStamped()
+        pose_world.header.stamp = self.get_clock().now().to_msg()
+        pose_world.header.frame_id = self._world_frame
+        pose_world.pose.position.x = pos_base['x']
+        pose_world.pose.position.y = pos_base['y']
+        pose_world.pose.position.z = pos_base['z']
 
-        # 用 grasp_yaw 构造 orientation（绕 Z 轴旋转）
         half_yaw = grasp_yaw / 2.0
-        pose_cam.pose.orientation.x = 0.0
-        pose_cam.pose.orientation.y = 0.0
-        pose_cam.pose.orientation.z = math.sin(half_yaw)
-        pose_cam.pose.orientation.w = math.cos(half_yaw)
-
-        # 转换到 world 坐标系
-        pose_world = self._transform_to_world(pose_cam)
-        if pose_world is None:
-            return
+        pose_world.pose.orientation.x = 0.0
+        pose_world.pose.orientation.y = 0.0
+        pose_world.pose.orientation.z = math.sin(half_yaw)
+        pose_world.pose.orientation.w = math.cos(half_yaw)
 
         # ── 中值平滑 ──
         p = pose_world.pose.position
