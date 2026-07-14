@@ -13,9 +13,9 @@
 
 ## 🎬 演示
 
-<video src="docs/demo.mp4" controls width="100%"></video>
+[![Demo Video](docs/demo_thumb.png)](docs/demo.mp4)
 
-> 完整抓取演示：YOLO 检测桌面方块 → 坐标变换 → MoveIt 规划 → 机械臂抓取
+> 👆 点击上图播放完整抓取演示视频
 
 ## 🧱 系统架构
 
